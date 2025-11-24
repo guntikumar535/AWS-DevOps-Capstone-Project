@@ -162,3 +162,6 @@ ECS will create a new task definition and roll out automatically.
 -Keep Terraform modular (vpc.tf, ecs.tf, alb.tf) for clarity.
 -Always check CloudWatch logs if ECS service fails.
 -Use Terraform outputs to find endpoints and ECS cluster info.
+
+
+----- THANKS YOU ------
