@@ -1,211 +1,164 @@
-# AWS ECS Fargate Capstone – Containerized Web Application
+Step-by-Step Guide: Deploy a Containerized Web App on AWS using Terraform & ECS
 
-This project demonstrates deploying a **containerized web application** (Python Flask or Node.js) on **AWS ECS Fargate** using **Terraform** for Infrastructure as Code (IaC). The deployment includes a custom VPC, ECS cluster, task definitions, security groups, and an Application Load Balancer (ALB) for high availability.
+**Step 0: Prerequisites**
+Before you start, ensure you have:
+AWS Account with permissions for:
+VPC, EC2, NAT, ECS, ALB, IAM, ECR, CloudWatch
 
----
+**Tools Installed:**
+Terraform >= 1.5
+AWS CLI v2
+Docker
 
-## Scenario
+#Configured AWS CLI with a profile:
+aws configure --profile default
 
-Your organization is developing a microservice-based web application. You have been asked to deploy a simple containerized web service on AWS using Terraform. The setup must be **scalable, repeatable, and secure**.
-**#Architecture Overview**
-                ┌─────────────────────────────┐
-                │       Internet Users        │
-                └─────────────┬─────────────┘
-                              │ HTTP/HTTPS (80/443)
-                              ▼
-                ┌─────────────────────────────┐
-                │   Application Load Balancer │
-                │      (ALB – Public)        │
-                └─────────────┬─────────────┘
-                              │
-                   ┌──────────┴──────────┐
-                   │                     │
-           ┌───────────────┐     ┌───────────────┐
-           │  Target Group │     │  Target Group │
-           │   (Private)   │     │   (Private)   │
-           └──────┬────────┘     └──────┬────────┘
-                  │                     │
-           ┌───────────────┐     ┌───────────────┐
-           │ ECS Fargate   │     │ ECS Fargate   │
-           │ Task (Flask) │     │ Task (Flask) │
-           └───────────────┘     └───────────────┘
-                  │                     │
-                  └─────────────┬───────┘
-                                │
-                        ┌───────────────┐
-                        │  VPC & Subnets │
-                        │ - 2 Public     │
-                        │ - 2 Private    │
-                        └───────────────┘
-                                │
-                       ┌─────────────────┐
-                       │ Internet & NAT  │
-                       │ Gateways        │
-                       └─────────────────┘
-**#Repository Structure**
+#Basic knowledge of Terraform, Docker, and AWS ECS concepts.
+
+**Step 1: Create Your Project Structure**
+
+Set up a local folder for your project:
 aws-ecs-fargate-capstone/
-│
-├── python-docker/                   # Containerized web application
-│   ├── app.py                       # Flask or Node.js application
-│   ├── Dockerfile                   # Docker image definition
-│   └── requirements.txt             # Python dependencies
-│
-├── terraform/                       # Terraform configuration files
-│   ├── vpc.tf                       # VPC, subnets, gateways
-│   ├── security_groups.tf           # ALB & ECS security groups
-│   ├── ecs.tf                       # ECS cluster, task definitions, services
-│   ├── alb.tf                       # Application Load Balancer and target groups
-│   ├── variables.tf                 # Terraform input variables
-│   ├── locals.tf                     # Derived values and locals
-│   ├── outputs.tf                   # Terraform outputs
-│   └── terraform.tfvars             # Environment-specific variable overrides
-│
-├── README.md                         # Project documentation & instructions
-└── .gitignore                        # Optional: ignores files like .terraform/, __pycache__/
+├── python-docker/
+│   ├── app.py
+│   ├── Dockerfile
+│   └── requirements.txt
+└── terraform/
+    ├── vpc.tf
+    ├── security_groups.tf
+    ├── ecs.tf
+    ├── alb.tf
+    ├── variables.tf
+    ├── locals.tf
+    ├── outputs.tf
+    └── terraform.tfvars
+python-docker/ → your web app
+terraform/ → all infrastructure code
 
-## Requirements Implemented
+**Step 2: Build Your Web Application**
+If using Flask (Python):
+app.py
 
-### 1. AWS Infrastructure Setup
-Using Terraform:
+from flask import Flask
+app = Flask(__name__)
 
-- Create a VPC with **2 public and 2 private subnets** across multiple availability zones
-- Configure an **Internet Gateway**, **NAT Gateway**, and appropriate route tables
-- Set up **Security Groups**:
-  - HTTP (port 80) access for ALB
-  - SSH (port 22) if needed for management
-  - Internal ECS communication restricted to VPC
+@app.route("/")
+def home():
+    return "Hello from ECS Fargate!"
 
-### 2. ECS Setup
-- Create an **ECS Cluster** using **Fargate**
-- Define **Task Definitions**:
-  - Container image from **Amazon ECR** or **Docker Hub**
-  - Port mapping **80:80**
-  - CPU and memory resource limits
-- Deploy an **ECS Service** with **at least 2 tasks** for high availability
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=80)
 
-### 3. Load Balancing
-- Deploy an **Application Load Balancer (ALB)** to route traffic to ECS tasks
-- Configure **target groups and listeners** for proper routing and health checks
+#requirements.txt
+flask
 
-### 4. Automation and Outputs
-- Terraform outputs include:
-  - `alb_dns_name` – public endpoint of the app
-  - `ecs_cluster_name` – ECS cluster name
-  - `running_task_count` – number of tasks currently running
-- Terraform variables allow environment selection (e.g., `dev` or `prod`)
+**Dockerfile**
+ FROM python:3.10-slim
+ WORKDIR /app
+ COPY requirements.txt .
+ RUN pip install -r requirements.txt
+ COPY . .
+ EXPOSE 80
+ CMD ["python", "app.py"]
 
----
+**Test locally:**
+ cd python-docker
+ docker build -t web-app:latest .
+ docker run -p 8080:80 web-app:latest
 
-## Prerequisites
+Open **http://localhost:8080** to verify it works.
 
-- AWS account with permissions for: **ECR, ECS, IAM, VPC, EC2, ELB, CloudWatch Logs**
-- Tools installed:
-  - Terraform >= 1.5
-  - AWS CLI v2
-  - Docker
-- AWS credentials configured locally (e.g., profile `default`):
-```bash
-aws sts get-caller-identity --profile default
-Repo Layout
-python-docker/app.py: Flask app (or Node.js)
+**Step 3: Push Docker Image to Amazon ECR**
 
-python-docker/Dockerfile: Builds container image on port 80
+#Create an ECR repository:
+ aws ecr create-repository \
+   --repository-name web-app \
+   --region us-east-1 \
+   --profile default
 
-variables.tf / locals.tf / ecs.tf / alb.tf / vpc.tf: Terraform infrastructure
-
-terraform.tfvars: Environment-specific overrides
-
-One-time Setup
-Create or verify ECR repository:
-
-bash
-Copy code
-aws ecr describe-repositories \
-  --repository-names web-app \
-  --region us-east-1 \
-  --profile default || \
-aws ecr create-repository \
-  --repository-name web-app \
-  --region us-east-1 \
-  --profile default
-Authenticate Docker to ECR:
-
-bash
-Copy code
-aws ecr get-login-password --region us-east-1 --profile default \
-| docker login --username AWS --password-stdin <account_id>.dkr.ecr.us-east-1.amazonaws.com
-Build and Push Container Image
-bash
-Copy code
-cd python-docker
-docker build -t web-app:latest -f Dockerfile .
-
-export NEW_TAG="v$(date +%Y%m%d-%H%M%S)"
-
-docker tag web-app:latest <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
-docker push <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
-Configure Terraform Variables
-Edit terraform.tfvars:
-
-hcl
-Copy code
-aws_region      = "us-east-1"
-aws_profile     = "default"
-environment     = "dev"
-ecr_image_tag   = "<your NEW_TAG from above>"
-Note: ecr_image_url is derived automatically in locals.tf.
-
-Deploy Infrastructure
-bash
-Copy code
-terraform init
-terraform plan
-terraform apply --auto-approve
-Outputs:
-
-alb_dns_name – public endpoint
-
-ecs_cluster_name – ECS cluster
-
-running_task_count – number of active tasks
-
-Open the app in your browser:
-
-cpp
-Copy code
-http://<alb_dns_name>
-Updating Application
-Edit python-docker/app.py
-
-Rebuild and push a new image tag:
-
-bash
-Copy code
-export NEW_TAG="v$(date +%Y%m%d-%H%M%S)"
-docker build -t web-app:latest -f Dockerfile .
-docker tag web-app:latest <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
-docker push <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
-Update terraform.tfvars with the new ecr_image_tag and run:
-
-bash
-Copy code
-terraform apply --auto-approve
-Clean Up
-Destroy all resources to avoid charges:
-
-bash
-Copy code
-terraform destroy --auto-approve
-Notes
-ECS Cluster: web-app-<env>
-
-ECS Service: web-app-service
-
-Image URL constructed via locals.tf from account_id, aws_region, ecr_repo_name, and ecr_image_tag
-
-yaml
-Copy code
-
----  THANK YOU ----
+#Authenticate Docker to ECR:
+ aws ecr get-login-password --region us-east-1 --profile default \
+ | docker login --username AWS --password-stdin <account_id>.dkr.ecr.us-east-1.amazonaws.com
 
 
+#Build, tag, and push image:
+ cd python-docker
+ export NEW_TAG="v1"
+ docker build -t web-app:latest .
+ docker tag web-app:latest <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
+ docker push <account_id>.dkr.ecr.us-east-1.amazonaws.com/web-app:$NEW_TAG
+
+**Step 4: Write Terraform Code**
+1 VPC Setup (vpc.tf)
+ Create VPC, 2 public & 2 private subnets
+ Configure Internet Gateway & NAT Gateway
+ Set up Route Tables
+2 Security Groups (security_groups.tf)
+ ALB SG → Allow HTTP 80 from internet
+ ECS SG → Allow traffic from ALB SG
+ Optional SSH SG → Allow port 22 from your IP
+3 ECS Setup (ecs.tf)
+ Create ECS cluster using Fargate
+ Define ECS Task Definition:
+   -Image → your ECR image
+   -CPU, memory, port 80 mapping
+ Create ECS Service with 2 tasks minimum
+4 Load Balancer (alb.tf)
+ Application Load Balancer in public subnets
+ Target group → ECS tasks
+ Listeners → HTTP 80 → target group
+ Health checks → path /
+5 Variables & Locals
+ variables.tf → define AWS region, environment, ecr_image_tag
+ locals.tf → construct ECR image URL from variables
+6 Outputs (outputs.tf)
+ output "alb_dns_name" {
+   value = aws_lb.web_app.dns_name
+ }
+ output "ecs_cluster_name" {
+   value = aws_ecs_cluster.web_cluster.name
+ }
+ output "running_task_count" {
+   value = aws_ecs_service.web_service.desired_count
+ }
+
+**Step 5: Deploy with Terraform**
+
+#Initialize Terraform:
+ cd terraform
+ terraform init
+
+#Validate plan:
+ terraform plan
+
+#Apply:
+ terraform apply --auto-approve
+
+Terraform will create all resources and output:
+ ALB DNS → visit your app
+ ECS cluster name
+ Number of running tasks
+
+**Step 6: Update Application**
+ Modify app.py
+ Build & push a new Docker tag
+ Update terraform.tfvars with ecr_image_tag
+ Apply Terraform again:
+  terraform apply --auto-approve
+ECS will create a new task definition and roll out automatically.
+
+**Step 7: Test Application**
+ Open the ALB DNS in browser
+ Check CloudWatch Logs for ECS task logs
+ Confirm high availability by stopping a task → ALB routes traffic to remaining tasks
+
+**Step 8: Clean Up**
+ To avoid charges:
+ terraform destroy --auto-approve
+
+**Tips for Success**
+-Use immutable Docker tags for deterministic deployments.
+-Verify subnets & security groups to avoid ALB 5xx errors.
+-Keep Terraform modular (vpc.tf, ecs.tf, alb.tf) for clarity.
+-Always check CloudWatch logs if ECS service fails.
+-Use Terraform outputs to find endpoints and ECS cluster info.
